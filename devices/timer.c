@@ -18,7 +18,10 @@
 #endif
 
 /* Number of timer ticks since OS booted. */
+/*global ticks 全局ticks*/
 static int64_t ticks;
+/*新加sleep_list睡眠链表来存放所有正在睡眠的线程*/
+static struct list sleep_list;
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -37,6 +40,10 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  /*初始化sleep_list睡眠链表*/
+  list_init (&sleep_list);
+  /* Initialize ticks */
+  ticks = 0;
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -67,6 +74,7 @@ timer_calibrate (void)
 }
 
 /* Returns the number of timer ticks since the OS booted. */
+/*访问tick的接口，加锁原子化的*/
 int64_t
 timer_ticks (void) 
 {
@@ -86,14 +94,37 @@ timer_elapsed (int64_t then)
 
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
+/*timer_sleep需要能将线程加入睡眠链表，并设定唤醒时间*/
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
+  int64_t start = timer_ticks ();//获取当前时间
 
-  ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  //忙等待busy_waiting
+  /*
+  ASSERT (intr_get_level () == INTR_ON);//需要能判断中断是否打开以确保能打开中断
+  while (timer_elapsed (start) < ticks) //循环检查时间是否已到
+    thread_yield ();//让出CPU，进行忙等待
+  */
+  //睡眠等待
+  struct thread *cur = thread_current();//获取当前线程
+  
+  enum intr_level old_level = intr_disable ();//关闭中断
+
+  cur->wake_up_ticks = start + ticks;//根据参数设置线程的唤醒时间
+  list_insert_ordered(&sleep_list, &cur->elem, thread_wake_up_ticks_less, NULL);//将线程加入睡眠链表
+  thread_block();//将线程阻塞
+
+  intr_set_level (old_level);//重新打开中断
+  
+
+}
+/*比较函数，用于排序*/
+bool thread_wake_up_ticks_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+    struct thread *t_a = list_entry(a, struct thread, elem);
+    struct thread *t_b = list_entry(b, struct thread, elem);
+
+    return t_a->wake_up_ticks < t_b->wake_up_ticks;
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -167,11 +198,27 @@ timer_print_stats (void)
 }
 
 /* Timer interrupt handler. */
+/*需要能唤醒达到唤醒时间的线程*/
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
-  ticks++;
+  ticks++;//递进
+  //thread_tick ();
+  int64_t now = timer_ticks();
+
+  while(!list_empty(&sleep_list)){
+    /*通过将线程按照唤醒时间有序地插入到睡眠队列中，
+    可以确保在时钟中断处理函数中按顺序唤醒线程。
+    这使得唤醒操作更加高效，因为只需要检查链表的前部元素即可*/
+    struct thread *t = list_entry(list_front(&sleep_list),struct thread,elem);
+    if(t->wake_up_ticks>now){
+      break;
+    }
+    list_pop_front(&sleep_list);
+    thread_unblock(t);
+  }
   thread_tick ();
+
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
