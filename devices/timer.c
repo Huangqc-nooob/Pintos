@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include <stdbool.h> // 确保包含布尔类型
   
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -32,6 +33,7 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+static bool thread_wake_up_ticks_less(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -108,7 +110,7 @@ timer_sleep (int64_t ticks)
   */
   //睡眠等待
   struct thread *cur = thread_current();//获取当前线程
-  
+
   enum intr_level old_level = intr_disable ();//关闭中断
 
   cur->wake_up_ticks = start + ticks;//根据参数设置线程的唤醒时间
@@ -120,7 +122,10 @@ timer_sleep (int64_t ticks)
 
 }
 /*比较函数，用于排序*/
-bool thread_wake_up_ticks_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+bool 
+thread_wake_up_ticks_less(const struct list_elem *a, const struct list_elem *b, void *aux) 
+{
+    (void)aux;
     struct thread *t_a = list_entry(a, struct thread, elem);
     struct thread *t_b = list_entry(b, struct thread, elem);
 
@@ -292,3 +297,14 @@ real_time_delay (int64_t num, int32_t denom)
   ASSERT (denom % 1000 == 0);
   busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000)); 
 }
+
+int64_t get_min_wake_up_ticks() {
+    if (list_empty(&sleep_list)) {
+        return INT64_MAX;  // 如果列表为空，返回一个很大的值
+    }
+
+    struct thread *t = list_entry(list_front(&sleep_list), struct thread, elem);
+    return t->wake_up_ticks;
+}
+
+
