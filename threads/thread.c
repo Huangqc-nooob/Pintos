@@ -382,13 +382,21 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  //thread_current ()->priority = new_priority;
   struct thread *cur = thread_current();
   enum intr_level old_level = intr_disable();
   int old_priority = cur->priority;
-  cur->priority = new_priority;
+  //cur->priority = new_priority;
+  cur->ori_priority = new_priority;//考虑到优先级捐赠的情况
 
-    // 如果当前线程在就绪队列中，重新排序
+  // 处理优先级捐赠逻辑
+  
+  if(list_empty(&cur->donations)||new_priority > old_priority){
+    cur->priority = new_priority;
+  }else{
+    cur->priority = list_entry(list_front(&cur->donations), struct thread, donation_elem)->priority;
+  }
+
+  // 如果当前线程在就绪队列中，重新排序
   if (cur->status == THREAD_READY) {
     list_remove(&cur->elem);
     list_insert_ordered(&ready_list, &cur->elem, thread_priority_compare, NULL);
@@ -396,7 +404,7 @@ thread_set_priority (int new_priority)
 
   // 如果当前线程新的优先级低于当前就绪队列最高优先级，则主动让出CPU
   //检查就绪队列是否为空并且获取就绪队列中最前面的(优先级最高)
-  if (!list_empty(&ready_list) && new_priority < list_entry(list_front(&ready_list), struct thread, elem)->priority) {
+  if (!list_empty(&ready_list) && cur->priority < list_entry(list_front(&ready_list), struct thread, elem)->priority) {
     thread_yield();
   }
 
@@ -527,6 +535,9 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->ori_priority = priority;
+  list_init(&t->donations);
+  t->waiting_for = NULL;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();

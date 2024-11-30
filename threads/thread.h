@@ -101,6 +101,10 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
     int64_t wake_up_ticks; /* Ticks at which the thread should wake up */
+    struct list donations; /* List of donations. */
+    struct lock *waiting_for; /* Lock the thread is waiting for. */
+    struct list_elem donation_elem; /* List element for priority donation. */
+    int ori_priority;
   };
 
 /* If false (default), use round-robin scheduler.
