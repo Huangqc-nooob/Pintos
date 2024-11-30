@@ -47,6 +47,17 @@ static struct thread *initial_thread;
 /*一个用于同步线程 ID（TID）分配的锁。它确保多个线程不会分配到相同的 ID */
 static struct lock tid_lock;
 
+static bool thread_priority_compare(const struct list_elem *a, const struct list_elem *b, void *aux);
+/*比较函数，用于排序*/
+bool thread_priority_compare(const struct list_elem *a, const struct list_elem *b, void *aux) {
+    // 强制类型转换
+    struct thread *t_a = list_entry(a, struct thread, elem);
+    struct thread *t_b = list_entry(b, struct thread, elem);
+
+    // 比较 priority,a的优先级搞的先插入
+    return t_a->priority > t_b->priority;
+}
+
 /* Stack frame for kernel_thread(). */
 /*这个结构体通常用于在创建新的内核线程时，设置线程的初始执行环境*/
 struct kernel_thread_frame 
@@ -227,6 +238,11 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+   /*需要比较当前正在运行的线程的优先级，
+  if the new one thread has higher priority,the current one
+  should give up the cpu(yield)*/
+  if (t->priority > thread_current()->priority){ 
+    thread_yield(); }
 
   return tid;
 }
@@ -264,7 +280,8 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  //list_push_back (&ready_list, &t->elem);
+  list_insert_ordered(&ready_list, &t->elem, thread_priority_compare, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -337,7 +354,8 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);//加入到就绪队列
+    //list_push_back (&ready_list, &cur->elem);//加入到就绪队列
+    list_insert_ordered(&ready_list, &cur->elem, thread_priority_compare, NULL);
   cur->status = THREAD_READY;//设置为就绪状态
   schedule ();//context switch
   intr_set_level (old_level);
@@ -364,7 +382,25 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  //thread_current ()->priority = new_priority;
+  struct thread *cur = thread_current();
+  enum intr_level old_level = intr_disable();
+  int old_priority = cur->priority;
+  cur->priority = new_priority;
+
+    // 如果当前线程在就绪队列中，重新排序
+  if (cur->status == THREAD_READY) {
+    list_remove(&cur->elem);
+    list_insert_ordered(&ready_list, &cur->elem, thread_priority_compare, NULL);
+  }
+
+  // 如果当前线程新的优先级低于当前就绪队列最高优先级，则主动让出CPU
+  //检查就绪队列是否为空并且获取就绪队列中最前面的(优先级最高)
+  if (!list_empty(&ready_list) && new_priority < list_entry(list_front(&ready_list), struct thread, elem)->priority) {
+    thread_yield();
+  }
+
+  intr_set_level(old_level);
 }
 
 /* Returns the current thread's priority. */

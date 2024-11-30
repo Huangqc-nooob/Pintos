@@ -208,7 +208,7 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;//递进
-  //thread_tick ();
+  thread_tick ();
   int64_t now = timer_ticks();
 
   while(!list_empty(&sleep_list)){
@@ -222,7 +222,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
     list_pop_front(&sleep_list);
     thread_unblock(t);
   }
-  thread_tick ();
+  //thread_tick ();
 
 }
 
